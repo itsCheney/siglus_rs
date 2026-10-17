@@ -146,10 +146,15 @@ fn fallback_font_for(ch: char) -> Option<FontArc> {
         faces
             .iter()
             .filter_map(|(path, name)| {
-                let (data, index) = font_file_face(path, &normalize_font_name_for_match(name))?;
-                FontRef::try_from_slice_and_index(data, index)
-                    .ok()
-                    .map(FontArc::from)
+                let font = font_file_face(path, &normalize_font_name_for_match(name))
+                    .and_then(|(data, index)| FontRef::try_from_slice_and_index(data, index).ok());
+                if font.is_none() {
+                    log::warn!(
+                        "fallback font {} ({name}) could not be loaded",
+                        path.display()
+                    );
+                }
+                font.map(FontArc::from)
             })
             .collect()
     });
@@ -500,8 +505,14 @@ impl FontCache {
         }
         // A host font stands in for the requested Windows face: its own
         // registered face is used whatever the game asked for.
-        let face = host_font_face(path).unwrap_or_else(|| normalized_name.to_owned());
+        let host_face = host_font_face(path);
+        let face = host_face
+            .clone()
+            .unwrap_or_else(|| normalized_name.to_owned());
         let Some((data, face_index)) = font_file_face(path, &face) else {
+            if host_face.is_some() {
+                log::warn!("host font {} could not be loaded", path.display());
+            }
             return false;
         };
         self.install_font_face(path, data, face_index)
@@ -514,8 +525,12 @@ impl FontCache {
         if !crate::resource::game_file_exists(path) || !is_supported_font_path(path) {
             return false;
         }
-        let face = host_font_face(path).unwrap_or_default();
+        let host_face = host_font_face(path);
+        let face = host_face.clone().unwrap_or_default();
         let Some((data, face_index)) = font_file_face(path, &face) else {
+            if host_face.is_some() {
+                log::warn!("host font {} could not be loaded", path.display());
+            }
             return false;
         };
         self.install_font_face(path, data, face_index)
@@ -2515,7 +2530,11 @@ fn platform_font_candidates_for_name(name: &str) -> Vec<PathBuf> {
     let key = normalize_font_name_for_match(name.trim_start_matches('@'));
     let mut out = if key.contains("mincho") || key.contains("明朝") {
         host_font_paths(Some(HostFontFamily::Mincho))
-    } else if key.contains("gothic") || key.contains("ゴシック") || key.contains("meiryo") || key.contains("メイリオ") {
+    } else if key.contains("gothic")
+        || key.contains("ゴシック")
+        || key.contains("meiryo")
+        || key.contains("メイリオ")
+    {
         host_font_paths(Some(HostFontFamily::Gothic))
     } else {
         Vec::new()
