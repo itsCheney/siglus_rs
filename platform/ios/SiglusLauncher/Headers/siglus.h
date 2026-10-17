@@ -1,6 +1,7 @@
 #ifndef SIGLUS_H
 #define SIGLUS_H
 
+#include <stddef.h>
 #include <stdint.h>
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
@@ -68,6 +69,12 @@ void siglus_mikage_register_fallback_font(const char *path_utf8, const char *fac
    valid during the call; any thread. A NULL callback stops them. */
 typedef void (*siglus_mikage_log_callback)(int32_t level, const char *target, const char *message, void *context);
 void siglus_mikage_set_log_callback(siglus_mikage_log_callback callback, void *context, int32_t max_level);
+/* Decodes one H.264 intra frame (Annex B) of width x height into planar YUV
+   4:2:0: y holds width*height samples, u and v ceil(width/2)*ceil(height/2).
+   Returns the samples' bit depth, or a negative value on failure. Used for the
+   UCI images some repacks put in .g00 files; any thread. */
+typedef int32_t (*siglus_mikage_h264_decoder)(const uint8_t *data, size_t length, uint32_t width, uint32_t height, uint16_t *y, uint16_t *u, uint16_t *v);
+void siglus_mikage_set_h264_decoder(siglus_mikage_h264_decoder decoder);
 /* Scene.pck / Gameexe.dat replacements for the game in root (a patched
    executable's Scene.chs, Gameexe.chs...); NULL keeps the default. Call before create. */
 void siglus_mikage_set_resource_names(const char *root_utf8, const char *scene_utf8, const char *gameexe_utf8);

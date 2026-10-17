@@ -74,6 +74,12 @@ pub unsafe extern "C" fn siglus_mikage_register_font_face(
     register_host_font_face(PathBuf::from(path), family, face);
 }
 
+/// The H.264 decoder for UCI images in `.g00` files; null removes it.
+#[unsafe(no_mangle)]
+pub extern "C" fn siglus_mikage_set_h264_decoder(decoder: Option<crate::assets::uci::H264DecodeFn>) {
+    crate::assets::uci::set_h264_decoder(decoder);
+}
+
 /// Forgets every registered and fallback font; register the next game's
 /// fonts after this, before creating it.
 #[unsafe(no_mangle)]

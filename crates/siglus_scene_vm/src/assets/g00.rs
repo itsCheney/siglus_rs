@@ -88,6 +88,29 @@ pub fn decode_g00(data: &[u8]) -> Result<DecodedG00> {
             if decompress_length == 0 {
                 bail!("g00 type0 decompress_length=0");
             }
+            if super::uci::is_uci(&data[off..]) {
+                let image = super::uci::decode(&data[off..]).context("type0 UCI")?;
+                if image.width != width || image.height != height {
+                    bail!(
+                        "type0 UCI size mismatch: got={}x{}, expect={width}x{height}",
+                        image.width,
+                        image.height
+                    );
+                }
+                return Ok(DecodedG00 {
+                    kind,
+                    width,
+                    height,
+                    original_sizes: vec![(width, height)],
+                    frames: vec![RgbaImage {
+                        width,
+                        height,
+                        center_x: 0,
+                        center_y: 0,
+                        rgba: bgra_to_rgba_inplace(image.bgra),
+                    }],
+                });
+            }
             let mut out = vec![0u8; decompress_length];
             lzss_decompress_24bit(&data[off..], &mut out).context("lzss_decompress_24bit")?;
 
@@ -210,8 +233,13 @@ pub fn decode_g00(data: &[u8]) -> Result<DecodedG00> {
                 bail!("type2 payload out of bounds");
             }
 
-            let mut debuf = vec![0u8; decompress_length];
-            lzss_decompress(&data[off..], &mut debuf).context("lzss_decompress")?;
+            let debuf = if data[off..].starts_with(MARKED_UCI_MAGIC) {
+                rebuild_marked_uci_type2(&data[off..], decompress_length).context("type2 UCI")?
+            } else {
+                let mut debuf = vec![0u8; decompress_length];
+                lzss_decompress(&data[off..], &mut debuf).context("lzss_decompress")?;
+                debuf
+            };
 
             // debuf: u32 entries, then entries * {u32 offset,u32 length}
             if debuf.len() < 4 {
@@ -304,6 +332,93 @@ pub fn decode_g00(data: &[u8]) -> Result<DecodedG00> {
             })
         }
     }
+}
+
+/// Type 2 payloads of UCI repacks: in place of the LZSS stream, `"MARK"`,
+/// a u32 header length, the decompressed cut table and every cut and chip
+/// header with the chip pixels left out, then one UCI blob per chip in the
+/// same order (its length in the chip header's keep[18]).
+const MARKED_UCI_MAGIC: &[u8] = b"MARK";
+
+/// Rebuilds the decompressed type 2 buffer, chip pixels decoded to BGRA at
+/// the offsets the cut table names.
+fn rebuild_marked_uci_type2(payload: &[u8], decompress_length: usize) -> Result<Vec<u8>> {
+    let header_len = read_u32le(payload, 4)? as usize;
+    let header = payload
+        .get(8..8 + header_len)
+        .context("MARK header out of bounds")?;
+    let mut blobs = &payload[8 + header_len..];
+
+    let cut_count = read_u32le(header, 0)? as usize;
+    let table_len = cut_count
+        .checked_mul(8)
+        .and_then(|v| v.checked_add(4))
+        .context("MARK cut table overflow")?;
+    if table_len > header.len() {
+        bail!("MARK cut table out of bounds");
+    }
+    let mut cuts = Vec::with_capacity(cut_count);
+    for i in 0..cut_count {
+        let offset = read_u32le(header, 4 + i * 8)? as usize;
+        let size = read_i32le(header, 8 + i * 8)?;
+        if offset != 0 && size > 0 && !cuts.contains(&offset) {
+            cuts.push(offset);
+        }
+    }
+    cuts.sort_unstable();
+
+    let mut out = vec![0u8; decompress_length.max(table_len)];
+    out[..table_len].copy_from_slice(&header[..table_len]);
+    let mut at = table_len;
+    for offset in cuts {
+        let cut = header
+            .get(at..at + G02_PART_INFO_SIZE)
+            .context("MARK cut header out of bounds")?;
+        let chip_count = read_u16le(cut, 2)? as usize;
+        write_into(&mut out, offset, cut)?;
+        at += G02_PART_INFO_SIZE;
+        let mut write_at = offset + G02_PART_INFO_SIZE;
+        for _ in 0..chip_count {
+            let chip = header
+                .get(at..at + G02_BLOCK_INFO_SIZE)
+                .context("MARK chip header out of bounds")?;
+            at += G02_BLOCK_INFO_SIZE;
+            write_into(&mut out, write_at, chip)?;
+            write_at += G02_BLOCK_INFO_SIZE;
+
+            let width = read_u16le(chip, 6)? as u32;
+            let height = read_u16le(chip, 8)? as u32;
+            let image = super::uci::decode(blobs).context("chip")?;
+            if image.width != width || image.height != height {
+                bail!(
+                    "chip UCI size mismatch: got={}x{}, expect={width}x{height}",
+                    image.width,
+                    image.height
+                );
+            }
+            let blob_len = read_u32le(chip, 84)? as usize;
+            let used = if blob_len > 0 {
+                blob_len
+            } else {
+                image.consumed
+            };
+            blobs = blobs.get(used..).context("MARK chip data out of bounds")?;
+            write_into(&mut out, write_at, &image.bgra)?;
+            write_at += image.bgra.len();
+        }
+    }
+    Ok(out)
+}
+
+fn write_into(out: &mut Vec<u8>, at: usize, bytes: &[u8]) -> Result<()> {
+    let end = at
+        .checked_add(bytes.len())
+        .context("MARK offset overflow")?;
+    if end > out.len() {
+        out.resize(end, 0);
+    }
+    out[at..end].copy_from_slice(bytes);
+    Ok(())
 }
 
 fn transparent_missing_g00_cut() -> RgbaImage {
