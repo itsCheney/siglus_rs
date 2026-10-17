@@ -67,6 +67,7 @@ pub mod desktop_messagebox;
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 pub mod desktop_twitter;
 pub mod host;
+pub mod mikage_host;
 #[cfg(target_os = "ios")]
 pub mod ios_host;
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]

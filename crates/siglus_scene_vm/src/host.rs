@@ -582,6 +582,23 @@ impl SiglusHost {
         now
     }
 
+    /// Host lifecycle: mutes audio and writes the global save when the app
+    /// leaves the foreground, and unmutes when it returns.
+    pub fn set_foreground(&mut self, foreground: bool) {
+        self.vm.ctx.audio.set_output_muted(!foreground);
+        if !foreground {
+            crate::runtime::forms::syscom::write_global_save(&self.vm.ctx);
+        }
+    }
+
+    /// A secondary (right) click at a point, for hosts whose touch input only
+    /// produces left clicks.
+    pub fn secondary_click(&mut self, x: f64, y: f64) {
+        self.mouse_move(x, y);
+        self.mouse_down(VmMouseButton::Right);
+        self.mouse_up(VmMouseButton::Right);
+    }
+
     pub fn vm_mut(&mut self) -> &mut SceneVm<'static> {
         &mut self.vm
     }

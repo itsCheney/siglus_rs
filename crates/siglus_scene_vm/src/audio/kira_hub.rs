@@ -123,6 +123,17 @@ impl AudioHub {
         self.manager.is_some()
     }
 
+    /// Silences (or restores) everything at the main track, for a host that
+    /// stops stepping the engine while it is in the background.
+    pub fn set_output_muted(&mut self, muted: bool) {
+        if let Some(manager) = self.manager.as_mut() {
+            let amplitude = if muted { 0.0 } else { 1.0 };
+            manager
+                .main_track()
+                .set_volume(Volume::Amplitude(amplitude), Tween::default());
+        }
+    }
+
     fn track_ref(&self, kind: TrackKind) -> Option<&TrackHandle> {
         match kind {
             TrackKind::Bgm => self.bgm.as_ref(),

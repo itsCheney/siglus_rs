@@ -138,6 +138,7 @@ pub unsafe extern "C" fn siglus_ios_create(
         }
         Err(e) => {
             log::error!("siglus_ios_create: {e:?}");
+            crate::mikage_host::set_last_error(&format!("{e:#}"));
             eprintln!("[SIGLUS_IOS_ERROR] siglus_ios_create: {e:?}");
             std::ptr::null_mut()
         }

@@ -48,8 +48,21 @@ void siglus_ios_resize(void *handle, uint32_t surface_width, uint32_t surface_he
 void siglus_ios_touch(void *handle, int32_t phase, double x_points, double y_points);
 void siglus_ios_text_input(void *handle, const char *text_utf8);
 void siglus_ios_ime_preedit(void *handle, const char *text_utf8, int32_t cursor_start, int32_t cursor_end);
+void siglus_ios_key_down(void *handle, int32_t key_code);
+void siglus_ios_key_up(void *handle, int32_t key_code);
 void siglus_ios_destroy(void *handle);
 #endif
+
+/* Mikage host additions (all platforms; same handle as siglus_ios_*). */
+const char *siglus_mikage_last_error(void);
+/* family: 0 gothic (also the generic fallback), 1 mincho. Call before create. */
+void siglus_mikage_register_font(const char *path_utf8, int32_t family);
+/* 0 running, 1 game ended, 2 error (see siglus_mikage_last_error). */
+int32_t siglus_mikage_step(void *handle, uint32_t dt_ms);
+void siglus_mikage_set_foreground(void *handle, int32_t foreground);
+void siglus_mikage_secondary_click(void *handle, double x, double y);
+/* Windows virtual-key code: 0x1B Escape, 0x0D Enter, 0x20 Space, 0x11 Ctrl. */
+void siglus_mikage_key(void *handle, int32_t key_code, int32_t down);
 
 #if defined(__ANDROID__)
 void siglus_android_init_context(void *java_vm_ptr, void *context_ptr);
