@@ -14,8 +14,57 @@ use std::sync::{Mutex, OnceLock};
 
 static MISSING_CONFIGURED_FONTS_LOGGED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
-// Share one embedded font allocation between game text and desktop dialogs.
-pub(crate) static DEFAULT_FONT_BYTES: &[u8] = include_bytes!("../assets/fonts/default.ttf");
+// Mikage: the upstream embedded default font was Microsoft's MS PGothic,
+// which may not be redistributed. It is gone; the host registers fonts the
+// device already has (see `register_host_font`) and those are the fallback.
+pub(crate) static DEFAULT_FONT_BYTES: Option<&[u8]> = None;
+
+/// Which original face a host font stands in for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostFontFamily {
+    Gothic,
+    Mincho,
+}
+
+static HOST_FONTS: OnceLock<Mutex<Vec<(HostFontFamily, PathBuf)>>> = OnceLock::new();
+
+/// Registers a font file the host provides (for example a system font found
+/// through CoreText on iOS). Host fonts are tried before the platform paths,
+/// both for configured faces and as the generic fallback.
+pub fn register_host_font(path: PathBuf, family: HostFontFamily) {
+    let fonts = HOST_FONTS.get_or_init(|| Mutex::new(Vec::new()));
+    let mut fonts = match fonts.lock() {
+        Ok(fonts) => fonts,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if !fonts.iter().any(|(f, p)| *f == family && *p == path) {
+        fonts.push((family, path));
+    }
+}
+
+fn host_font_paths(family: Option<HostFontFamily>) -> Vec<PathBuf> {
+    let Some(fonts) = HOST_FONTS.get() else {
+        return Vec::new();
+    };
+    let fonts = match fonts.lock() {
+        Ok(fonts) => fonts,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let mut out: Vec<PathBuf> = fonts
+        .iter()
+        .filter(|(f, _)| family.is_none_or(|family| *f == family))
+        .map(|(_, p)| p.clone())
+        .collect();
+    // Gothic first for the generic fallback: it is the usual message face.
+    if family.is_none() {
+        out.sort_by_key(|p| {
+            !fonts
+                .iter()
+                .any(|(f, q)| *f == HostFontFamily::Gothic && q == p)
+        });
+    }
+    out
+}
 
 fn log_missing_configured_font_once(requested_name: &str, fallback: Option<&Path>) {
     let key = normalize_font_name_for_match(requested_name.trim_start_matches('@'));
@@ -46,8 +95,8 @@ fn log_missing_configured_font_once(requested_name: &str, fallback: Option<&Path
 }
 
 mod embedded_font {
-    pub const EMBEDDED_DEFAULT_FONT: Option<&'static [u8]> = Some(super::DEFAULT_FONT_BYTES);
-    pub const EMBEDDED_DEFAULT_FONT_SOURCE: Option<&'static str> = Some("assets/fonts/default.ttf");
+    pub const EMBEDDED_DEFAULT_FONT: Option<&'static [u8]> = super::DEFAULT_FONT_BYTES;
+    pub const EMBEDDED_DEFAULT_FONT_SOURCE: Option<&'static str> = None;
     pub const EMBEDDED_DEFAULT_FONT_ALIASES: &[&str] = &[
         "ＭＳ Ｐゴシック",
         "MS PGothic",
@@ -2359,7 +2408,13 @@ fn project_font_dirs(project_dir: &Path) -> Vec<PathBuf> {
 
 fn platform_font_candidates_for_name(name: &str) -> Vec<PathBuf> {
     let key = normalize_font_name_for_match(name.trim_start_matches('@'));
-    let mut out = Vec::new();
+    let mut out = if key.contains("mincho") || key.contains("明朝") {
+        host_font_paths(Some(HostFontFamily::Mincho))
+    } else if key.contains("gothic") || key.contains("ゴシック") || key.contains("meiryo") || key.contains("メイリオ") {
+        host_font_paths(Some(HostFontFamily::Gothic))
+    } else {
+        Vec::new()
+    };
 
     #[cfg(target_os = "windows")]
     {
@@ -2429,7 +2484,7 @@ fn platform_font_candidates_for_name(name: &str) -> Vec<PathBuf> {
 }
 
 fn platform_font_candidates() -> Vec<PathBuf> {
-    let mut out = Vec::new();
+    let mut out = host_font_paths(None);
 
     #[cfg(target_os = "windows")]
     {

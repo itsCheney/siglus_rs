@@ -17,10 +17,13 @@ use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 use winit::window::{Window, WindowAttributes, WindowId};
 
 fn configure_egui_default_font(ctx: &egui::Context) {
+    let Some(bytes) = crate::text_render::DEFAULT_FONT_BYTES else {
+        return;
+    };
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert(
         "siglus_default".to_string(),
-        egui::FontData::from_static(crate::text_render::DEFAULT_FONT_BYTES),
+        egui::FontData::from_static(bytes),
     );
     fonts
         .families
