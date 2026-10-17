@@ -949,6 +949,54 @@ pub(crate) fn initial_select_ini_append(project_dir: &Path) -> SelectIniAppendEn
         })
 }
 
+/// File names a host substitutes for `Scene.pck` and `Gameexe.dat` in one
+/// game directory. Patched executables of translated releases (such as a
+/// `SiglusEngineCHS.exe`) load renamed copies like `Scene.chs` and
+/// `Gameexe.chs`, leaving the original files for the original executable.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ResourceNames {
+    pub scene_pck: Option<String>,
+    pub gameexe: Option<String>,
+}
+
+static RESOURCE_NAME_OVERRIDES: std::sync::Mutex<Option<HashMap<PathBuf, ResourceNames>>> =
+    std::sync::Mutex::new(None);
+
+fn resource_names_key(project_dir: &Path) -> PathBuf {
+    fs::canonicalize(project_dir).unwrap_or_else(|_| project_dir.to_path_buf())
+}
+
+/// Sets the names used for `project_dir`; empty names restore the defaults.
+pub fn set_resource_names(project_dir: &Path, names: ResourceNames) {
+    let mut overrides = RESOURCE_NAME_OVERRIDES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let map = overrides.get_or_insert_with(HashMap::new);
+    let key = resource_names_key(project_dir);
+    if names == ResourceNames::default() {
+        map.remove(&key);
+    } else {
+        map.insert(key, names);
+    }
+}
+
+pub fn resource_names(project_dir: &Path) -> ResourceNames {
+    let overrides = RESOURCE_NAME_OVERRIDES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    overrides
+        .as_ref()
+        .and_then(|map| map.get(&resource_names_key(project_dir)).cloned())
+        .unwrap_or_default()
+}
+
+/// The host's replacement Gameexe file in the project root, if one is set and
+/// present.
+pub fn gameexe_override_path(project_dir: &Path) -> Option<PathBuf> {
+    let name = resource_names(project_dir).gameexe?;
+    resolve_windows_case_insensitive_file(&project_dir.join(name)).ok().flatten()
+}
+
 /// Resolve the one active Scene.pck used by the original lexer.
 ///
 /// The C++ path is `Gp_dir->exe_dir + "\\" + Gp_dir->append_dir +
@@ -960,7 +1008,10 @@ pub fn find_scene_pck_path_for_append(project_dir: &Path, append_dir: &str) -> R
     if !append_dir.is_empty() {
         base = base.join(append_dir);
     }
-    let candidate = base.join("Scene.pck");
+    let scene_name = resource_names(project_dir)
+        .scene_pck
+        .unwrap_or_else(|| String::from("Scene.pck"));
+    let candidate = base.join(&scene_name);
     if let Some(path) = resolve_windows_case_insensitive_file(&candidate)? {
         return Ok(path);
     }
@@ -969,14 +1020,15 @@ pub fn find_scene_pck_path_for_append(project_dir: &Path, append_dir: &str) -> R
     // Scene.pck under Data/. Preserve that compatibility only for the empty
     // append; an explicit Select.ini append must remain exact like C++.
     if append_dir.is_empty() {
-        let legacy = project_dir.join("Data").join("Scene.pck");
+        let legacy = project_dir.join("Data").join(&scene_name);
         if let Some(path) = resolve_windows_case_insensitive_file(&legacy)? {
             return Ok(path);
         }
     }
 
     bail!(
-        "Scene.pck not found for append {:?} under {}",
+        "{} not found for append {:?} under {}",
+        scene_name,
         append_dir,
         project_dir.display()
     )
@@ -1019,6 +1071,11 @@ pub fn find_initial_gameexe_path(project_dir: &Path) -> Result<PathBuf> {
     let mut base = project_dir.to_path_buf();
     if !append.dir.is_empty() {
         base = base.join(&append.dir);
+    }
+    if let Some(name) = resource_names(project_dir).gameexe {
+        if let Some(path) = resolve_windows_case_insensitive_file(&base.join(name))? {
+            return Ok(path);
+        }
     }
     for name in GAMEEXE_CANDIDATES {
         let candidate = base.join(name);
@@ -1708,4 +1765,35 @@ pub(crate) fn resolve_dat_file_path(
         }
     }
     Ok(None)
+}
+
+#[cfg(all(test, not(all(target_arch = "wasm32", target_os = "unknown"))))]
+mod resource_name_tests {
+    use super::*;
+
+    #[test]
+    fn host_names_replace_scene_and_gameexe() {
+        let dir = std::env::temp_dir().join(format!("siglus-names-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        for name in ["Scene.pck", "Gameexe.dat", "Scene.chs", "Gameexe.chs"] {
+            fs::write(dir.join(name), b"x").unwrap();
+        }
+        let file_name = |path: PathBuf| path.file_name().unwrap().to_string_lossy().into_owned();
+        assert_eq!(file_name(find_scene_pck_path_for_append(&dir, "").unwrap()), "Scene.pck");
+
+        set_resource_names(
+            &dir,
+            ResourceNames {
+                scene_pck: Some("Scene.chs".into()),
+                gameexe: Some("Gameexe.chs".into()),
+            },
+        );
+        assert_eq!(file_name(find_scene_pck_path_for_append(&dir, "").unwrap()), "Scene.chs");
+        assert_eq!(file_name(find_initial_gameexe_path(&dir).unwrap()), "Gameexe.chs");
+        assert_eq!(gameexe_override_path(&dir).map(file_name).as_deref(), Some("Gameexe.chs"));
+
+        set_resource_names(&dir, ResourceNames::default());
+        assert_eq!(file_name(find_initial_gameexe_path(&dir).unwrap()), "Gameexe.dat");
+        fs::remove_dir_all(&dir).unwrap();
+    }
 }

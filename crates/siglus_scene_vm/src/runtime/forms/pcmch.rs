@@ -139,6 +139,9 @@ fn resolve_subdir_path(
 }
 
 fn find_gameexe_path(project_dir: &Path) -> Option<PathBuf> {
+    if let Some(path) = crate::resource::gameexe_override_path(project_dir) {
+        return Some(path);
+    }
     const CANDIDATES: &[&str] = &[
         "Gameexe.dat",
         "Gameexe.ini",

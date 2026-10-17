@@ -98,3 +98,26 @@ pub unsafe extern "C" fn siglus_mikage_key(handle: *mut c_void, key_code: i32, d
         }
     }
 }
+
+/// Makes the game in `root_utf8` load `scene_utf8` instead of Scene.pck and
+/// `gameexe_utf8` instead of Gameexe.dat, as a patched executable of a
+/// translated release does (Scene.chs, Gameexe.chs...). Null or empty
+/// names restore the defaults. Call before `siglus_ios_create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn siglus_mikage_set_resource_names(
+    root_utf8: *const c_char,
+    scene_utf8: *const c_char,
+    gameexe_utf8: *const c_char,
+) {
+    let Some(root) = (unsafe { cstr_opt(root_utf8) }) else {
+        return;
+    };
+    let name = |pointer: *const c_char| unsafe { cstr_opt(pointer) };
+    crate::resource::set_resource_names(
+        std::path::Path::new(&root),
+        crate::resource::ResourceNames {
+            scene_pck: name(scene_utf8),
+            gameexe: name(gameexe_utf8),
+        },
+    );
+}
