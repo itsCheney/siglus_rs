@@ -57,6 +57,10 @@ void siglus_ios_destroy(void *handle);
 const char *siglus_mikage_last_error(void);
 /* family: 0 gothic (also the generic fallback), 1 mincho. Call before create. */
 void siglus_mikage_register_font(const char *path_utf8, int32_t family);
+/* Same, using the face named face_utf8 (PostScript or family name) in the file. */
+void siglus_mikage_register_font_face(const char *path_utf8, int32_t family, const char *face_utf8);
+/* Forgets every registered and fallback font, before registering the next game's. */
+void siglus_mikage_clear_fonts(void);
 /* Adds a face (PostScript or family name) to the chain used for characters
    the game's font lacks, tried in order. Call before create. */
 void siglus_mikage_register_fallback_font(const char *path_utf8, const char *face_utf8);

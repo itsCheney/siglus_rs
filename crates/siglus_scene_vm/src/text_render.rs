@@ -27,6 +27,9 @@ pub enum HostFontFamily {
 }
 
 static HOST_FONTS: OnceLock<Mutex<Vec<(HostFontFamily, PathBuf)>>> = OnceLock::new();
+/// The face to use inside a registered host font file (a collection such as
+/// PingFang's holds many), by PostScript or family name.
+static HOST_FONT_FACES: Mutex<Vec<(PathBuf, String)>> = Mutex::new(Vec::new());
 
 /// Registers a font file the host provides (for example a system font found
 /// through CoreText on iOS). Host fonts are tried before the platform paths,
@@ -40,6 +43,50 @@ pub fn register_host_font(path: PathBuf, family: HostFontFamily) {
     if !fonts.iter().any(|(f, p)| *f == family && *p == path) {
         fonts.push((family, path));
     }
+}
+
+/// Like `register_host_font`, using the face named `face_name` in the file.
+pub fn register_host_font_face(path: PathBuf, family: HostFontFamily, face_name: String) {
+    {
+        let mut faces = HOST_FONT_FACES
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        faces.retain(|(p, _)| *p != path);
+        faces.push((path.clone(), face_name));
+    }
+    register_host_font(path, family);
+}
+
+/// Forgets every host and fallback font, so a host can register a different
+/// set for the next game.
+pub fn clear_host_fonts() {
+    if let Some(fonts) = HOST_FONTS.get() {
+        fonts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
+    }
+    HOST_FONT_FACES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clear();
+    FALLBACK_FONT_FACES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clear();
+    *FALLBACK_FONTS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+}
+
+/// The face registered for a host font file, normalized for matching.
+fn host_font_face(path: &Path) -> Option<String> {
+    HOST_FONT_FACES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .iter()
+        .find(|(p, _)| p == path)
+        .map(|(_, name)| normalize_font_name_for_match(name))
 }
 
 fn host_font_paths(family: Option<HostFontFamily>) -> Vec<PathBuf> {
@@ -451,7 +498,10 @@ impl FontCache {
         if !crate::resource::game_file_exists(path) || !is_supported_font_path(path) {
             return false;
         }
-        let Some((data, face_index)) = font_file_face(path, normalized_name) else {
+        // A host font stands in for the requested Windows face: its own
+        // registered face is used whatever the game asked for.
+        let face = host_font_face(path).unwrap_or_else(|| normalized_name.to_owned());
+        let Some((data, face_index)) = font_file_face(path, &face) else {
             return false;
         };
         self.install_font_face(path, data, face_index)
@@ -464,7 +514,8 @@ impl FontCache {
         if !crate::resource::game_file_exists(path) || !is_supported_font_path(path) {
             return false;
         }
-        let Some((data, face_index)) = font_file_face(path, "") else {
+        let face = host_font_face(path).unwrap_or_default();
+        let Some((data, face_index)) = font_file_face(path, &face) else {
             return false;
         };
         self.install_font_face(path, data, face_index)

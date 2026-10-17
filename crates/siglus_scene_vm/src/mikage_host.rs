@@ -8,7 +8,9 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use crate::host::{SiglusHost, cstr_opt, default_frame_interval_ms};
-use crate::text_render::{HostFontFamily, register_fallback_font, register_host_font};
+use crate::text_render::{
+    HostFontFamily, clear_host_fonts, register_fallback_font, register_host_font, register_host_font_face,
+};
 
 static LAST_ERROR: Mutex<Option<CString>> = Mutex::new(None);
 
@@ -50,6 +52,33 @@ pub unsafe extern "C" fn siglus_mikage_register_font(path_utf8: *const c_char, f
         HostFontFamily::Gothic
     };
     register_host_font(PathBuf::from(path), family);
+}
+
+/// Like `siglus_mikage_register_font`, using the face named `face_utf8`
+/// (PostScript or family name) inside the file, which matters for font
+/// collections.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn siglus_mikage_register_font_face(
+    path_utf8: *const c_char,
+    family: i32,
+    face_utf8: *const c_char,
+) {
+    let (Some(path), Some(face)) = (unsafe { cstr_opt(path_utf8) }, unsafe { cstr_opt(face_utf8) }) else {
+        return;
+    };
+    let family = if family == 1 {
+        HostFontFamily::Mincho
+    } else {
+        HostFontFamily::Gothic
+    };
+    register_host_font_face(PathBuf::from(path), family, face);
+}
+
+/// Forgets every registered and fallback font; register the next game's
+/// fonts after this, before creating it.
+#[unsafe(no_mangle)]
+pub extern "C" fn siglus_mikage_clear_fonts() {
+    clear_host_fonts();
 }
 
 /// Adds the face named `face_utf8` (PostScript or family name) in the font
