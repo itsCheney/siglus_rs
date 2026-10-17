@@ -66,6 +66,49 @@ fn host_font_paths(family: Option<HostFontFamily>) -> Vec<PathBuf> {
     out
 }
 
+/// Faces tried, in order, for characters the selected font has no glyph for
+/// (for example Simplified Chinese in a translated game drawn with a
+/// Japanese face). Each entry is a font file and the face's PostScript or
+/// family name inside it.
+static FALLBACK_FONT_FACES: Mutex<Vec<(PathBuf, String)>> = Mutex::new(Vec::new());
+static FALLBACK_FONTS: Mutex<Option<Vec<FontArc>>> = Mutex::new(None);
+
+/// Adds a face to the per-character fallback chain.
+pub fn register_fallback_font(path: PathBuf, face_name: String) {
+    let mut faces = FALLBACK_FONT_FACES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if !faces.iter().any(|(p, n)| *p == path && *n == face_name) {
+        faces.push((path, face_name));
+    }
+    *FALLBACK_FONTS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+}
+
+/// The first fallback face that has a glyph for `ch`.
+fn fallback_font_for(ch: char) -> Option<FontArc> {
+    let mut fonts = FALLBACK_FONTS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let fonts = fonts.get_or_insert_with(|| {
+        let faces = FALLBACK_FONT_FACES
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        faces
+            .iter()
+            .filter_map(|(path, name)| {
+                let (data, index) = font_file_face(path, &normalize_font_name_for_match(name))?;
+                FontRef::try_from_slice_and_index(data, index)
+                    .ok()
+                    .map(FontArc::from)
+            })
+            .collect()
+    });
+    fonts.iter().find(|font| font.glyph_id(ch).0 != 0).cloned()
+}
+
 fn log_missing_configured_font_once(requested_name: &str, fallback: Option<&Path>) {
     let key = normalize_font_name_for_match(requested_name.trim_start_matches('@'));
     if key.is_empty() {
@@ -1533,6 +1576,17 @@ fn rotate_raster_glyph_clockwise(src: RasterGlyph) -> RasterGlyph {
 }
 
 fn rasterize_ab_glyph(font: &FontArc, ch: char, font_px: f32) -> RasterGlyph {
+    // A character the face lacks comes from the fallback chain, on the same
+    // baseline, instead of the face's empty box.
+    if font.glyph_id(ch).0 == 0 && !ch.is_whitespace() {
+        if let Some(fallback) = fallback_font_for(ch) {
+            return rasterize_ab_glyph_in(&fallback, ch, font_px);
+        }
+    }
+    rasterize_ab_glyph_in(font, ch, font_px)
+}
+
+fn rasterize_ab_glyph_in(font: &FontArc, ch: char, font_px: f32) -> RasterGlyph {
     let scale = PxScale::from(font_px.max(1.0));
     let scaled = font.as_scaled(scale);
     let glyph_id = scaled.glyph_id(ch);

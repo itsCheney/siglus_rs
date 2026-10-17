@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use crate::host::{SiglusHost, cstr_opt, default_frame_interval_ms};
-use crate::text_render::{HostFontFamily, register_host_font};
+use crate::text_render::{HostFontFamily, register_fallback_font, register_host_font};
 
 static LAST_ERROR: Mutex<Option<CString>> = Mutex::new(None);
 
@@ -50,6 +50,17 @@ pub unsafe extern "C" fn siglus_mikage_register_font(path_utf8: *const c_char, f
         HostFontFamily::Gothic
     };
     register_host_font(PathBuf::from(path), family);
+}
+
+/// Adds the face named `face_utf8` (PostScript or family name) in the font
+/// file at `path_utf8` to the chain used for characters the game's font
+/// lacks. Faces are tried in the order they were added.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn siglus_mikage_register_fallback_font(path_utf8: *const c_char, face_utf8: *const c_char) {
+    let (Some(path), Some(face)) = (unsafe { cstr_opt(path_utf8) }, unsafe { cstr_opt(face_utf8) }) else {
+        return;
+    };
+    register_fallback_font(PathBuf::from(path), face);
 }
 
 /// Like `siglus_ios_step`: 0 running, 1 the game ended, 2 error (see
@@ -120,4 +131,69 @@ pub unsafe extern "C" fn siglus_mikage_set_resource_names(
             gameexe: name(gameexe_utf8),
         },
     );
+}
+
+/// Receives engine log records: level (1 error, 2 warn, 3 info, 4 debug,
+/// 5 trace), the module target and the message, both UTF-8 and valid only
+/// during the call. It may be called from any thread.
+pub type SiglusMikageLogCallback =
+    extern "C" fn(level: i32, target: *const c_char, message: *const c_char, context: *mut c_void);
+
+struct HostLogger {
+    sink: Mutex<Option<(SiglusMikageLogCallback, usize)>>,
+}
+
+static HOST_LOGGER: HostLogger = HostLogger {
+    sink: Mutex::new(None),
+};
+
+impl log::Log for HostLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= log::max_level()
+    }
+
+    fn log(&self, record: &log::Record) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+        let sink = *self.sink.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let Some((callback, context)) = sink else {
+            return;
+        };
+        let target = CString::new(record.target().replace('\0', " ")).unwrap_or_default();
+        let message = CString::new(record.args().to_string().replace('\0', " ")).unwrap_or_default();
+        callback(record.level() as i32, target.as_ptr(), message.as_ptr(), context as *mut c_void);
+    }
+
+    fn flush(&self) {}
+}
+
+/// Sends engine log records at `max_level` (as in the callback) and more
+/// severe to `callback`; null stops them. Panics are logged as errors.
+#[unsafe(no_mangle)]
+pub extern "C" fn siglus_mikage_set_log_callback(
+    callback: Option<SiglusMikageLogCallback>,
+    context: *mut c_void,
+    max_level: i32,
+) {
+    static INSTALL: std::sync::Once = std::sync::Once::new();
+    INSTALL.call_once(|| {
+        if log::set_logger(&HOST_LOGGER).is_ok() {
+            let previous = std::panic::take_hook();
+            std::panic::set_hook(Box::new(move |info| {
+                log::error!("panic: {info}");
+                previous(info);
+            }));
+        }
+    });
+    *HOST_LOGGER.sink.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) =
+        callback.map(|callback| (callback, context as usize));
+    log::set_max_level(match (callback.is_some(), max_level) {
+        (false, _) | (_, ..=0) => log::LevelFilter::Off,
+        (_, 1) => log::LevelFilter::Error,
+        (_, 2) => log::LevelFilter::Warn,
+        (_, 3) => log::LevelFilter::Info,
+        (_, 4) => log::LevelFilter::Debug,
+        _ => log::LevelFilter::Trace,
+    });
 }

@@ -57,6 +57,13 @@ void siglus_ios_destroy(void *handle);
 const char *siglus_mikage_last_error(void);
 /* family: 0 gothic (also the generic fallback), 1 mincho. Call before create. */
 void siglus_mikage_register_font(const char *path_utf8, int32_t family);
+/* Adds a face (PostScript or family name) to the chain used for characters
+   the game's font lacks, tried in order. Call before create. */
+void siglus_mikage_register_fallback_font(const char *path_utf8, const char *face_utf8);
+/* Engine log records: level 1 error, 2 warn, 3 info, 4 debug, 5 trace; strings
+   valid during the call; any thread. A NULL callback stops them. */
+typedef void (*siglus_mikage_log_callback)(int32_t level, const char *target, const char *message, void *context);
+void siglus_mikage_set_log_callback(siglus_mikage_log_callback callback, void *context, int32_t max_level);
 /* Scene.pck / Gameexe.dat replacements for the game in root (a patched
    executable's Scene.chs, Gameexe.chs...); NULL keeps the default. Call before create. */
 void siglus_mikage_set_resource_names(const char *root_utf8, const char *scene_utf8, const char *gameexe_utf8);
