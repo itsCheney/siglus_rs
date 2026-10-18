@@ -233,7 +233,7 @@ pub fn decode_g00(data: &[u8]) -> Result<DecodedG00> {
                 bail!("type2 payload out of bounds");
             }
 
-            let debuf = if data[off..].starts_with(MARKED_UCI_MAGIC) {
+            let debuf = if is_marked_uci(&data[off..]) {
                 rebuild_marked_uci_type2(&data[off..], decompress_length).context("type2 UCI")?
             } else {
                 let mut debuf = vec![0u8; decompress_length];
@@ -334,77 +334,46 @@ pub fn decode_g00(data: &[u8]) -> Result<DecodedG00> {
     }
 }
 
-/// Type 2 payloads of UCI repacks: in place of the LZSS stream, `"MARK"`,
-/// a u32 header length, the decompressed cut table and every cut and chip
-/// header with the chip pixels left out, then one UCI blob per chip in the
-/// same order (its length in the chip header's keep[18]).
+/// Type 2 payloads of UCI repacks, in place of the LZSS stream, as the
+/// repack's loader (SiglusDebugger2.dll) expands them:
+/// - `"MARK"`, u32 n, n bytes copied to the start of the buffer (the cut
+///   table and the cut and chip headers), then a UCI blob whose pixels follow
+///   them;
+/// - `"M2RK"`, then (u32 n, u32 to, u32 from) entries up to n = 0: n bytes at
+///   `from` (counted from the magic) are copied to `to`, and the UCI blob
+///   right after them in the payload is decoded right after them in the
+///   buffer.
 const MARKED_UCI_MAGIC: &[u8] = b"MARK";
+const MULTI_MARKED_UCI_MAGIC: &[u8] = b"M2RK";
 
-/// Rebuilds the decompressed type 2 buffer, chip pixels decoded to BGRA at
-/// the offsets the cut table names.
+fn is_marked_uci(payload: &[u8]) -> bool {
+    payload.starts_with(MARKED_UCI_MAGIC) || payload.starts_with(MULTI_MARKED_UCI_MAGIC)
+}
+
+/// Rebuilds the decompressed type 2 buffer, chip pixels decoded to BGRA.
 fn rebuild_marked_uci_type2(payload: &[u8], decompress_length: usize) -> Result<Vec<u8>> {
-    let header_len = read_u32le(payload, 4)? as usize;
-    let header = payload
-        .get(8..8 + header_len)
-        .context("MARK header out of bounds")?;
-    let mut blobs = &payload[8 + header_len..];
-
-    let cut_count = read_u32le(header, 0)? as usize;
-    let table_len = cut_count
-        .checked_mul(8)
-        .and_then(|v| v.checked_add(4))
-        .context("MARK cut table overflow")?;
-    if table_len > header.len() {
-        bail!("MARK cut table out of bounds");
-    }
-    let mut cuts = Vec::with_capacity(cut_count);
-    for i in 0..cut_count {
-        let offset = read_u32le(header, 4 + i * 8)? as usize;
-        let size = read_i32le(header, 8 + i * 8)?;
-        if offset != 0 && size > 0 && !cuts.contains(&offset) {
-            cuts.push(offset);
-        }
-    }
-    cuts.sort_unstable();
-
-    let mut out = vec![0u8; decompress_length.max(table_len)];
-    out[..table_len].copy_from_slice(&header[..table_len]);
-    let mut at = table_len;
-    for offset in cuts {
-        let cut = header
-            .get(at..at + G02_PART_INFO_SIZE)
-            .context("MARK cut header out of bounds")?;
-        let chip_count = read_u16le(cut, 2)? as usize;
-        write_into(&mut out, offset, cut)?;
-        at += G02_PART_INFO_SIZE;
-        let mut write_at = offset + G02_PART_INFO_SIZE;
-        for _ in 0..chip_count {
-            let chip = header
-                .get(at..at + G02_BLOCK_INFO_SIZE)
-                .context("MARK chip header out of bounds")?;
-            at += G02_BLOCK_INFO_SIZE;
-            write_into(&mut out, write_at, chip)?;
-            write_at += G02_BLOCK_INFO_SIZE;
-
-            let width = read_u16le(chip, 6)? as u32;
-            let height = read_u16le(chip, 8)? as u32;
-            let image = super::uci::decode(blobs).context("chip")?;
-            if image.width != width || image.height != height {
-                bail!(
-                    "chip UCI size mismatch: got={}x{}, expect={width}x{height}",
-                    image.width,
-                    image.height
-                );
+    let mut out = vec![0u8; decompress_length];
+    let mut place = |len: usize, to: usize, from: usize| -> Result<()> {
+        let chunk = payload
+            .get(from..from.checked_add(len).context("UCI chunk overflow")?)
+            .context("UCI chunk out of bounds")?;
+        write_into(&mut out, to, chunk)?;
+        let image = super::uci::decode(&payload[from + len..]).context("chip")?;
+        write_into(&mut out, to + len, &image.bgra)
+    };
+    if payload.starts_with(MARKED_UCI_MAGIC) {
+        place(read_u32le(payload, 4)? as usize, 0, 8)?;
+    } else {
+        let mut at = 4;
+        loop {
+            let len = read_u32le(payload, at)? as usize;
+            if len == 0 {
+                break;
             }
-            let blob_len = read_u32le(chip, 84)? as usize;
-            let used = if blob_len > 0 {
-                blob_len
-            } else {
-                image.consumed
-            };
-            blobs = blobs.get(used..).context("MARK chip data out of bounds")?;
-            write_into(&mut out, write_at, &image.bgra)?;
-            write_at += image.bgra.len();
+            let to = read_u32le(payload, at + 4)? as usize;
+            let from = read_u32le(payload, at + 8)? as usize;
+            place(len, to, from)?;
+            at += 12;
         }
     }
     Ok(out)
