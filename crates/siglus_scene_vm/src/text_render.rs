@@ -146,8 +146,16 @@ fn fallback_font_for(ch: char) -> Option<FontArc> {
         faces
             .iter()
             .filter_map(|(path, name)| {
-                let font = font_file_face(path, &normalize_font_name_for_match(name))
-                    .and_then(|(data, index)| FontRef::try_from_slice_and_index(data, index).ok());
+                let font = font_file_face(path, &normalize_font_name_for_match(name)).and_then(
+                    |(data, index)| {
+                        let font = FontRef::try_from_slice_and_index(data, index).ok()?;
+                        if !maps_common_characters(&font) {
+                            warn_unusable_font(path, data, index);
+                            return None;
+                        }
+                        Some(font)
+                    },
+                );
                 if font.is_none() {
                     log::warn!(
                         "fallback font {} ({name}) could not be loaded",
@@ -159,6 +167,33 @@ fn fallback_font_for(ch: char) -> Option<FontArc> {
             .collect()
     });
     fonts.iter().find(|font| font.glyph_id(ch).0 != 0).cloned()
+}
+
+/// Whether a face has glyphs for any of a few Latin, kana and CJK
+/// characters; a face without a usable character map draws only boxes.
+fn maps_common_characters(font: &FontRef<'_>) -> bool {
+    ['A', 'あ', '中', '가']
+        .iter()
+        .any(|&ch| font.glyph_id(ch).0 != 0)
+}
+
+fn warn_unusable_font(path: &Path, data: &[u8], face_index: u32) {
+    let tables = ttf_parser::RawFace::parse(data, face_index)
+        .map(|face| {
+            face.table_records
+                .into_iter()
+                .map(|record| {
+                    let tag = record.tag.to_bytes();
+                    format!("{}:{}", String::from_utf8_lossy(&tag), record.length)
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_else(|_| "unparsable".to_owned());
+    log::warn!(
+        "font {} face {face_index} maps no characters; skipped (tables {tables})",
+        path.display()
+    );
 }
 
 fn log_missing_configured_font_once(requested_name: &str, fallback: Option<&Path>) {
@@ -486,6 +521,10 @@ impl FontCache {
 
     fn install_font_face(&mut self, path: &Path, data: &'static [u8], face_index: u32) -> bool {
         match FontRef::try_from_slice_and_index(data, face_index) {
+            Ok(font) if host_font_face(path).is_some() && !maps_common_characters(&font) => {
+                warn_unusable_font(path, data, face_index);
+                false
+            }
             Ok(font) => {
                 self.font = Some(FontArc::from(font));
                 self.loaded_from = Some(path.to_path_buf());
