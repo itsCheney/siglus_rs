@@ -9,7 +9,8 @@ use std::sync::Mutex;
 
 use crate::host::{SiglusHost, cstr_opt, default_frame_interval_ms};
 use crate::text_render::{
-    HostFontFamily, clear_host_fonts, register_fallback_font, register_host_font, register_host_font_face,
+    HostFontFamily, clear_host_fonts, register_fallback_font, register_host_font,
+    register_host_font_face,
 };
 
 static LAST_ERROR: Mutex<Option<CString>> = Mutex::new(None);
@@ -63,9 +64,11 @@ pub unsafe extern "C" fn siglus_mikage_register_font_face(
     family: i32,
     face_utf8: *const c_char,
 ) {
-    let (Some(path), Some(face)) = (unsafe { cstr_opt(path_utf8) }, unsafe { cstr_opt(face_utf8) }) else {
+    let Some(path) = (unsafe { cstr_opt(path_utf8) }) else {
         return;
     };
+    // An empty or null face is the file's first face.
+    let face = unsafe { cstr_opt(face_utf8) }.unwrap_or_default();
     let family = if family == 1 {
         HostFontFamily::Mincho
     } else {
@@ -76,7 +79,9 @@ pub unsafe extern "C" fn siglus_mikage_register_font_face(
 
 /// The H.264 decoder for UCI images in `.g00` files; null removes it.
 #[unsafe(no_mangle)]
-pub extern "C" fn siglus_mikage_set_h264_decoder(decoder: Option<crate::assets::uci::H264DecodeFn>) {
+pub extern "C" fn siglus_mikage_set_h264_decoder(
+    decoder: Option<crate::assets::uci::H264DecodeFn>,
+) {
     crate::assets::uci::set_h264_decoder(decoder);
 }
 
@@ -91,10 +96,15 @@ pub extern "C" fn siglus_mikage_clear_fonts() {
 /// file at `path_utf8` to the chain used for characters the game's font
 /// lacks. Faces are tried in the order they were added.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn siglus_mikage_register_fallback_font(path_utf8: *const c_char, face_utf8: *const c_char) {
-    let (Some(path), Some(face)) = (unsafe { cstr_opt(path_utf8) }, unsafe { cstr_opt(face_utf8) }) else {
+pub unsafe extern "C" fn siglus_mikage_register_fallback_font(
+    path_utf8: *const c_char,
+    face_utf8: *const c_char,
+) {
+    let Some(path) = (unsafe { cstr_opt(path_utf8) }) else {
         return;
     };
+    // An empty or null face is the file's first face.
+    let face = unsafe { cstr_opt(face_utf8) }.unwrap_or_default();
     register_fallback_font(PathBuf::from(path), face);
 }
 
@@ -191,13 +201,22 @@ impl log::Log for HostLogger {
         if !self.enabled(record.metadata()) {
             return;
         }
-        let sink = *self.sink.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let sink = *self
+            .sink
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let Some((callback, context)) = sink else {
             return;
         };
         let target = CString::new(record.target().replace('\0', " ")).unwrap_or_default();
-        let message = CString::new(record.args().to_string().replace('\0', " ")).unwrap_or_default();
-        callback(record.level() as i32, target.as_ptr(), message.as_ptr(), context as *mut c_void);
+        let message =
+            CString::new(record.args().to_string().replace('\0', " ")).unwrap_or_default();
+        callback(
+            record.level() as i32,
+            target.as_ptr(),
+            message.as_ptr(),
+            context as *mut c_void,
+        );
     }
 
     fn flush(&self) {}
@@ -221,7 +240,10 @@ pub extern "C" fn siglus_mikage_set_log_callback(
             }));
         }
     });
-    *HOST_LOGGER.sink.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) =
+    *HOST_LOGGER
+        .sink
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) =
         callback.map(|callback| (callback, context as usize));
     log::set_max_level(match (callback.is_some(), max_level) {
         (false, _) | (_, ..=0) => log::LevelFilter::Off,
