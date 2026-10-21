@@ -1018,7 +1018,7 @@ impl MovieManager {
 
         self.mpeg2_audio_tasks.remove(path);
         if let Some(err) = failed {
-            eprintln!(
+            log::warn!(
                 "[SG_MOV] mpeg2 audio decode failed path={} err={}",
                 path.display(),
                 err
@@ -1209,7 +1209,7 @@ impl MovieManager {
 
         self.wmv_audio_tasks.remove(path);
         if let Some(err) = failed {
-            eprintln!(
+            log::warn!(
                 "[SG_MOV] wmv audio decode failed path={} err={}",
                 path.display(),
                 err
@@ -1530,7 +1530,7 @@ impl MovieManager {
             (p.movie_position_ms(), p.take_stream_error())
         };
         if let Some(err) = stream_error {
-            eprintln!("[SG_MOV] streaming audio decoder error: {err:#}");
+            log::warn!("streaming movie audio decoder error: {err:#}");
             if let Some(mut p) = self.playbacks.remove(&id) {
                 p.stop();
             }
@@ -1550,7 +1550,7 @@ impl MovieManager {
             // A decoder failure is not the end of the movie.  Detach the failed
             // audio clock and let video continue on its own timer.  In particular,
             // never turn a WMA decode error into MOV.PLAY/PLAY_WAIT completion.
-            eprintln!("[SG_MOV] streaming audio decoder error: {err:#}");
+            log::warn!("streaming movie audio decoder error: {err:#}");
             if let Some(mut p) = self.playbacks.remove(&id) {
                 p.stop();
             }

@@ -8005,7 +8005,7 @@ impl CommandContext {
                 return;
             }
             Err(err) => {
-                eprintln!("[SG_MOV] error file={} err={:#}", file_name, err);
+                log::warn!("movie {} failed: {:#}", file_name, err);
                 self.globals.mov.playing = false;
                 return;
             }
