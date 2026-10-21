@@ -390,6 +390,7 @@ pub struct BgmDecoded {
 pub enum KoeSource {
     File(PathBuf),
     OvkEntryByNo { path: PathBuf, entry_no: u32 },
+    Uca(crate::audio::uca::UcaEntry),
 }
 
 /// Decode various Siglus audio containers into WAV (PCM16).
@@ -650,6 +651,10 @@ pub fn resolve_koe_source(project_dir: &Path, koe_no: i64) -> Result<KoeSource> 
             path: ovk,
             entry_no: koe_no_u32 % 100_000,
         });
+    }
+
+    if let Some(entry) = crate::audio::uca::find_koe(project_dir, koe_no_u32) {
+        return Ok(KoeSource::Uca(entry));
     }
 
     bail!("koe resource not found: koe_no={koe_no}")

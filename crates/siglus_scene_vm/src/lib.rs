@@ -42,6 +42,7 @@ pub mod elm_code;
 
 pub mod scene_stream;
 pub mod vm;
+pub mod x86_dll;
 
 // Re-export the format-first asset crate so higher layers (VM/app) can share
 // parsers/decoders without wiring a second direct dependency.

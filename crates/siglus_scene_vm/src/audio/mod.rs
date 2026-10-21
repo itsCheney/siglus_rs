@@ -7,6 +7,7 @@ pub mod kira_hub;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod nwa_stream;
 pub mod sfx_engine;
+pub mod uca;
 #[cfg(any(target_os = "horizon", target_os = "vita"))]
 pub mod switch_backend;
 

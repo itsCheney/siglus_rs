@@ -91,6 +91,8 @@ fn decode_koe_no_for_project(project_dir: &Path, koe_no: i64) -> Result<Vec<u8>>
                 .with_context(|| format!("decode KOE OVK entry: {}#{entry_no}", path.display()))?
                 .wav_bytes
         }
+        KoeSource::Uca(entry) => crate::audio::uca::decode_entry_to_wav(project_dir, entry)
+            .with_context(|| format!("decode KOE UCA entry: koe_no={koe_no}"))?,
     };
     if env_is_set!("SG_AUDIO_TRACE") {
         eprintln!(
