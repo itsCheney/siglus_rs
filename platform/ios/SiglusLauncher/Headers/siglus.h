@@ -107,10 +107,11 @@ void siglus_mikage_secondary_click(void *handle, double x, double y);
 /* Windows virtual-key code: 0x1B Escape, 0x0D Enter, 0x20 Space, 0x11 Ctrl. */
 void siglus_mikage_key(void *handle, int32_t key_code, int32_t down);
 /* Quick actions and game menu: 1 auto, 2 read skip, 3 quick save, 4 quick
-   load. Returns 1 when it ran. */
+   load, 5 backlog, 6 save screen, 7 load screen. Returns 1 when it ran. */
 int32_t siglus_mikage_command(void *handle, int32_t command);
 /* 1 auto on, 2 read skip on; 0x100 auto, 0x200 read skip available;
-   0x400 quick save, 0x800 quick load possible now. */
+   0x400 quick save, 0x800 quick load, 0x1000 backlog, 0x2000 save screen,
+   0x4000 load screen possible now. */
 uint32_t siglus_mikage_controls(void *handle);
 /* Trackpad cursor in siglus_ios_touch coordinates. phase: 0 move, 1 left
    down, 2 left up, 3 right down, 4 right up. */

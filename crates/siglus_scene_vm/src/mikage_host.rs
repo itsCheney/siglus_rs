@@ -181,7 +181,8 @@ pub unsafe extern "C" fn siglus_mikage_key(handle: *mut c_void, key_code: i32, d
 
 /// Runs one of Mikage's quick action or game menu commands: 1 toggles
 /// auto mode, 2 toggles read skip, 3 quick saves and 4 quick loads (the
-/// game's first quick slot). Returns 1 when it ran.
+/// game's first quick slot), 5 opens the backlog, 6 the save screen and 7
+/// the load screen. Returns 1 when it ran.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn siglus_mikage_command(handle: *mut c_void, command: i32) -> i32 {
     match unsafe { (handle as *mut SiglusHost).as_mut() } {
@@ -191,7 +192,8 @@ pub unsafe extern "C" fn siglus_mikage_command(handle: *mut c_void, command: i32
 }
 
 /// Bits: 1 auto on, 2 read skip on; 0x100 auto and 0x200 read skip
-/// available; 0x400 quick save and 0x800 quick load possible now.
+/// available; 0x400 quick save and 0x800 quick load possible now; 0x1000
+/// backlog, 0x2000 save and 0x4000 load screens can open now.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn siglus_mikage_controls(handle: *mut c_void) -> u32 {
     match unsafe { (handle as *const SiglusHost).as_ref() } {

@@ -4311,6 +4311,9 @@ pub const HOST_COMMAND_AUTO: i32 = 1;
 pub const HOST_COMMAND_SKIP: i32 = 2;
 pub const HOST_COMMAND_QUICK_SAVE: i32 = 3;
 pub const HOST_COMMAND_QUICK_LOAD: i32 = 4;
+pub const HOST_COMMAND_BACKLOG: i32 = 5;
+pub const HOST_COMMAND_SAVE: i32 = 6;
+pub const HOST_COMMAND_LOAD: i32 = 7;
 
 /// Auto mode and read skip as the system menu shows them, and whether the
 /// quick save slot (the game's first) can be written or loaded now.
@@ -4335,6 +4338,19 @@ pub fn host_controls(ctx: &CommandContext) -> u32 {
         }
         if local_save_file_exists(ctx, SaveKind::Quick, 0) {
             bits |= 1 << 11;
+        }
+    }
+    // The backlog and the save and load screens open as the system menu
+    // opens them, while nothing else of the system's is pending or open.
+    if st.pending_proc.is_none() && !st.msg_back_open {
+        if !ctx.globals.script.msg_back_disable && st.msg_back.check_enabled() != 0 {
+            bits |= 1 << 12;
+        }
+        if st.save_feature.check_enabled() != 0 && local_save_available(ctx) {
+            bits |= 1 << 13;
+        }
+        if st.load_feature.check_enabled() != 0 {
+            bits |= 1 << 14;
         }
     }
     bits
@@ -4373,6 +4389,29 @@ pub fn host_command(ctx: &mut CommandContext, command: i32) -> bool {
         }
         HOST_COMMAND_QUICK_LOAD if controls & (1 << 11) != 0 => {
             menu_load_slot(ctx, true, 0);
+            true
+        }
+        HOST_COMMAND_BACKLOG if controls & (1 << 12) != 0 => {
+            if !open_msg_back_proc(ctx) {
+                return false;
+            }
+            ctx.globals.syscom.pending_proc = Some(SyscomPendingProc {
+                kind: SyscomPendingProcKind::MsgBack,
+                warning: false,
+                se_play: false,
+                fade_out: false,
+                leave_msgbk: false,
+                save_id: 0,
+            });
+            true
+        }
+        HOST_COMMAND_SAVE if controls & (1 << 13) != 0 => {
+            prepare_runtime_save_thumb_capture_with_priority(ctx, CAPTURE_PRIOR_SAVE);
+            set_syscom_pending_proc(ctx, SyscomPendingProcKind::OpenSave);
+            true
+        }
+        HOST_COMMAND_LOAD if controls & (1 << 14) != 0 => {
+            set_syscom_pending_proc(ctx, SyscomPendingProcKind::OpenLoad);
             true
         }
         _ => false,
