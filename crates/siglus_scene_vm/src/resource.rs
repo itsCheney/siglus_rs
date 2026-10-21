@@ -87,6 +87,9 @@ pub fn read_file_bytes(path: &Path) -> Result<Vec<u8>> {
     not(all(target_arch = "wasm32", target_os = "unknown"))
 ))]
 pub fn read_file_bytes(path: &Path) -> Result<Vec<u8>> {
+    if let Some(replacement) = translated_g00_replacement(path) {
+        return Ok(fs::read(replacement)?);
+    }
     let Some(resolved) = resolve_windows_case_insensitive_file(path)? else {
         bail!("file not found: {}", path.display());
     };
@@ -105,6 +108,23 @@ pub fn read_file_bytes(path: &Path) -> Result<Vec<u8>> {
         }
         Err(err) => Err(err.into()),
     }
+}
+
+/// Translation repacks (Rewrite's Chinese one, through SiglusDebugger2.dll)
+/// put the translated copy of `name.g00` next to it as `name.g01`, and the
+/// hooked engine reads that one instead.
+#[cfg(all(
+    not(target_os = "horizon"),
+    not(all(target_arch = "wasm32", target_os = "unknown"))
+))]
+fn translated_g00_replacement(path: &Path) -> Option<PathBuf> {
+    let ext = path.extension()?.to_str()?;
+    if !ext.eq_ignore_ascii_case("g00") {
+        return None;
+    }
+    resolve_windows_case_insensitive_file(&path.with_extension("g01"))
+        .ok()
+        .flatten()
 }
 
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
