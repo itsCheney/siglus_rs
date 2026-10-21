@@ -169,12 +169,15 @@ fn fallback_font_for(ch: char) -> Option<FontArc> {
     fonts.iter().find(|font| font.glyph_id(ch).0 != 0).cloned()
 }
 
-/// Whether a face has glyphs for any of a few Latin, kana and CJK
-/// characters; a face without a usable character map draws only boxes.
+/// Whether a face has drawable glyphs for any of a few Latin, kana and CJK
+/// characters. A face without a usable character map draws only boxes, and
+/// one whose outlines are in a table we can't read (Apple's `hvgl`, as in
+/// PingFang since iOS 18) draws nothing.
 fn maps_common_characters(font: &FontRef<'_>) -> bool {
-    ['A', 'あ', '中', '가']
-        .iter()
-        .any(|&ch| font.glyph_id(ch).0 != 0)
+    ['A', 'あ', '中', '가'].iter().any(|&ch| {
+        let id = font.glyph_id(ch);
+        id.0 != 0 && font.outline(id).is_some()
+    })
 }
 
 fn warn_unusable_font(path: &Path, data: &[u8], face_index: u32) {
@@ -191,7 +194,7 @@ fn warn_unusable_font(path: &Path, data: &[u8], face_index: u32) {
         })
         .unwrap_or_else(|_| "unparsable".to_owned());
     log::warn!(
-        "font {} face {face_index} maps no characters; skipped (tables {tables})",
+        "font {} face {face_index} has no drawable characters; skipped (tables {tables})",
         path.display()
     );
 }
