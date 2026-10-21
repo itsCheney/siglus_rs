@@ -4305,6 +4305,80 @@ fn font_exists(project_dir: &Path, name: &str) -> bool {
     false
 }
 
+// Mikage's quick actions and game menu. The numbers match the host's
+// commands and control bits (siglus_mikage_command / siglus_mikage_controls).
+pub const HOST_COMMAND_AUTO: i32 = 1;
+pub const HOST_COMMAND_SKIP: i32 = 2;
+pub const HOST_COMMAND_QUICK_SAVE: i32 = 3;
+pub const HOST_COMMAND_QUICK_LOAD: i32 = 4;
+
+/// Auto mode and read skip as the system menu shows them, and whether the
+/// quick save slot (the game's first) can be written or loaded now.
+pub fn host_controls(ctx: &CommandContext) -> u32 {
+    let st = &ctx.globals.syscom;
+    let mut bits = 0u32;
+    if st.auto_mode.onoff {
+        bits |= 1 << 0;
+    }
+    if st.read_skip.onoff {
+        bits |= 1 << 1;
+    }
+    if st.auto_mode.check_enabled() != 0 {
+        bits |= 1 << 8;
+    }
+    if st.read_skip.check_enabled() != 0 {
+        bits |= 1 << 9;
+    }
+    if configured_save_count(ctx, true) > 0 {
+        if local_save_available(ctx) {
+            bits |= 1 << 10;
+        }
+        if local_save_file_exists(ctx, SaveKind::Quick, 0) {
+            bits |= 1 << 11;
+        }
+    }
+    bits
+}
+
+/// Runs a host command as the system menu would. Read skip follows the
+/// game's rules: it only turns on over read text unless the game lets it
+/// skip unread text.
+pub fn host_command(ctx: &mut CommandContext, command: i32) -> bool {
+    let controls = host_controls(ctx);
+    match command {
+        HOST_COMMAND_AUTO if controls & (1 << 8) != 0 => {
+            let on = !ctx.globals.syscom.auto_mode.onoff;
+            if on {
+                ctx.globals.syscom.read_skip.onoff = false;
+            }
+            ctx.globals.syscom.auto_mode.onoff = on;
+            true
+        }
+        HOST_COMMAND_SKIP if controls & (1 << 9) != 0 => {
+            if ctx.globals.syscom.read_skip.onoff {
+                ctx.globals.syscom.read_skip.onoff = false;
+                return true;
+            }
+            if !ctx.runtime_read_skip_is_enable() {
+                return false;
+            }
+            ctx.globals.syscom.auto_mode.onoff = false;
+            ctx.globals.syscom.read_skip.onoff = true;
+            ctx.runtime_update_read_skip_menu();
+            ctx.globals.syscom.read_skip.onoff
+        }
+        HOST_COMMAND_QUICK_SAVE if controls & (1 << 10) != 0 => {
+            menu_save_slot(ctx, true, 0);
+            true
+        }
+        HOST_COMMAND_QUICK_LOAD if controls & (1 << 11) != 0 => {
+            menu_load_slot(ctx, true, 0);
+            true
+        }
+        _ => false,
+    }
+}
+
 pub fn dispatch(ctx: &mut CommandContext, form_id: u32, args: &[Value]) -> Result<bool> {
     let Some(call) = parse_call(ctx, form_id, args) else {
         return Ok(false);

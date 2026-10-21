@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use crate::host::{SiglusHost, cstr_opt, default_frame_interval_ms};
+use crate::runtime::input::VmMouseButton;
 use crate::text_render::{
     HostFontFamily, clear_host_fonts, register_fallback_font, register_host_font,
     register_host_font_face,
@@ -175,6 +176,48 @@ pub unsafe extern "C" fn siglus_mikage_key(handle: *mut c_void, key_code: i32, d
         } else {
             host.key_up_code(key_code);
         }
+    }
+}
+
+/// Runs one of Mikage's quick action or game menu commands: 1 toggles
+/// auto mode, 2 toggles read skip, 3 quick saves and 4 quick loads (the
+/// game's first quick slot). Returns 1 when it ran.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn siglus_mikage_command(handle: *mut c_void, command: i32) -> i32 {
+    match unsafe { (handle as *mut SiglusHost).as_mut() } {
+        Some(host) => i32::from(host.host_command(command)),
+        None => 0,
+    }
+}
+
+/// Bits: 1 auto on, 2 read skip on; 0x100 auto and 0x200 read skip
+/// available; 0x400 quick save and 0x800 quick load possible now.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn siglus_mikage_controls(handle: *mut c_void) -> u32 {
+    match unsafe { (handle as *const SiglusHost).as_ref() } {
+        Some(host) => host.host_controls(),
+        None => 0,
+    }
+}
+
+/// Mikage's trackpad cursor, as a mouse at a point in the same coordinates
+/// as `siglus_ios_touch`. phase: 0 move, 1 left down, 2 left up, 3 right
+/// down, 4 right up.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn siglus_mikage_pointer(handle: *mut c_void, phase: i32, x: f64, y: f64) {
+    let Some(host) = (unsafe { (handle as *mut SiglusHost).as_mut() }) else {
+        return;
+    };
+    host.mouse_move(x, y);
+    let button = if phase >= 3 {
+        VmMouseButton::Right
+    } else {
+        VmMouseButton::Left
+    };
+    match phase {
+        1 | 3 => host.mouse_down(button),
+        2 | 4 => host.mouse_up(button),
+        _ => {}
     }
 }
 

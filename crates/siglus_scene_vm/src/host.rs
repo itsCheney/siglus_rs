@@ -591,6 +591,22 @@ impl SiglusHost {
         }
     }
 
+    /// Mikage's quick actions and game menu (see `syscom::host_command`).
+    pub fn host_command(&mut self, command: i32) -> bool {
+        if self.native_messagebox_pending() {
+            return false;
+        }
+        let done = crate::runtime::forms::syscom::host_command(&mut self.vm.ctx, command);
+        if done {
+            self.script_needs_pump = true;
+        }
+        done
+    }
+
+    pub fn host_controls(&self) -> u32 {
+        crate::runtime::forms::syscom::host_controls(&self.vm.ctx)
+    }
+
     /// A secondary (right) click at a point, for hosts whose touch input only
     /// produces left clicks.
     pub fn secondary_click(&mut self, x: f64, y: f64) {
