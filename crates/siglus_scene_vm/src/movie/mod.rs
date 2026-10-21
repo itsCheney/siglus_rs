@@ -23,6 +23,8 @@ use kira::sound::streaming::{
 use crate::assets::RgbaImage;
 use crate::audio::{AudioHub, TrackKind};
 
+pub mod host_movie;
+
 const MPEG2_HEADER_PROBE_BYTES: usize = 256 * 1024;
 const MPEG2_STREAM_CHUNK_BYTES: usize = 256 * 1024;
 const MPEG_AUDIO_HEAD_PROBE_MAX_BYTES: u64 = 16 * 1024 * 1024;
@@ -655,7 +657,7 @@ impl MovieManager {
                     .then_some(header.packet_count_hint as usize),
                 audio_duration_ms: None,
             }
-        } else if is_wmv_extension(&ext) {
+        } else if uses_wmv_stream(&path, &ext) {
             probe_wmv_movie_info(&path)?
         } else {
             let prefix = read_file_prefix(&path, MPEG2_HEADER_PROBE_BYTES)
@@ -809,7 +811,7 @@ impl MovieManager {
         if ext == "omv" {
             return self.poll_omv_stream_frame_for_path(path, timer_ms, loop_flag);
         }
-        if is_wmv_extension(&ext) {
+        if uses_wmv_stream(&path, &ext) {
             return self.poll_wmv_stream_frame_for_path(path, timer_ms, loop_flag);
         }
         self.poll_mpeg2_stream_frame_for_path(path, timer_ms)
@@ -1411,7 +1413,7 @@ impl MovieManager {
             .to_ascii_lowercase();
         let frame = if ext == "omv" {
             decode_omv_preview_frame(&path)?
-        } else if is_wmv_extension(&ext) {
+        } else if uses_wmv_stream(&path, &ext) {
             decode_wmv_preview_frame(&path)?
         } else {
             decode_mpeg2_preview_frame(&path)?
@@ -2256,7 +2258,84 @@ fn is_wmv_extension(ext: &str) -> bool {
     ext == "wmv"
 }
 
+/// WMV files and movies the host decodes share the PTS-ordered stream path.
+fn uses_wmv_stream(path: &Path, ext: &str) -> bool {
+    is_wmv_extension(ext) || host_movie::is_host_movie(path)
+}
+
+fn probe_host_movie_info(path: &Path) -> Result<MovieInfo> {
+    let movie = host_movie::HostMovie::open(path, false)?;
+    let info = movie.info;
+    Ok(MovieInfo {
+        path: path.to_path_buf(),
+        width: (info.width > 0).then_some(info.width),
+        height: (info.height > 0).then_some(info.height),
+        fps: None,
+        decoded_frames: None,
+        audio_duration_ms: (info.duration_ms > 0).then_some(info.duration_ms),
+    })
+}
+
+fn stream_host_movie_video_worker(
+    path: &Path,
+    tx: mpsc::SyncSender<Result<WmvStreamEvent, String>>,
+    request_ms: Arc<AtomicUsize>,
+) -> Result<()> {
+    let mut movie = host_movie::HostMovie::open(path, false)?;
+    let (width, height) = (movie.info.width, movie.info.height);
+    if tx.send(Ok(WmvStreamEvent::Info { width, height })).is_err() {
+        return Ok(());
+    }
+    let mut frame_idx = 0usize;
+    loop {
+        if request_ms.load(Ordering::Acquire) == usize::MAX {
+            return Ok(());
+        }
+        let Some((frame, source_pts_ms)) = movie
+            .next_frame()
+            .with_context(|| format!("decode host movie: {}", path.display()))?
+        else {
+            break;
+        };
+        let event = WmvStreamEvent::Video {
+            frame_idx,
+            source_pts_ms,
+            frame: Arc::new(frame),
+        };
+        if tx.send(Ok(event)).is_err() {
+            return Ok(());
+        }
+        frame_idx = frame_idx.saturating_add(1);
+    }
+    let _ = tx.send(Ok(WmvStreamEvent::Done));
+    Ok(())
+}
+
+fn decode_host_movie_audio(path: &Path, cancel: &AtomicBool) -> Result<Option<MovieAudio>> {
+    let Ok(mut movie) = host_movie::HostMovie::open(path, true) else {
+        return Ok(None);
+    };
+    let (channels, sample_rate) = (movie.info.channels, movie.info.sample_rate);
+    if channels == 0 || channels > u16::MAX as u32 || sample_rate == 0 {
+        return Ok(None);
+    }
+    let samples = movie.read_all_audio(cancel)?;
+    let frames = samples.len() / channels as usize;
+    Ok(Some(MovieAudio {
+        samples: Arc::new(samples),
+        mpeg_stream: None,
+        wmv_stream: None,
+        channels: channels as u16,
+        sample_rate,
+        start_ms: 0,
+        duration_ms: Some((frames as u64).saturating_mul(1000) / sample_rate as u64),
+    }))
+}
+
 fn probe_wmv_movie_info(path: &Path) -> Result<MovieInfo> {
+    if host_movie::is_host_movie(path) {
+        return probe_host_movie_info(path);
+    }
     #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
     let decoder = {
         let bytes = read_movie_bytes(path)?;
@@ -2332,6 +2411,9 @@ fn stream_wmv_video_worker(
     tx: mpsc::SyncSender<Result<WmvStreamEvent, String>>,
     request_ms: Arc<AtomicUsize>,
 ) -> Result<()> {
+    if host_movie::is_host_movie(path) {
+        return stream_host_movie_video_worker(path, tx, request_ms);
+    }
     let file =
         fs::File::open(path).with_context(|| format!("open WMV movie file: {}", path.display()))?;
     let mut decoder = wmv_decoder::AsfWmv2Decoder::open(BufReader::new(file))
@@ -2911,9 +2993,8 @@ impl OmvFramePool {
     /// A frame nothing but the pool holds any more. The other released
     /// frames are freed, so no more memory is kept than before.
     fn take(&mut self) -> Option<Arc<RgbaImage>> {
-        let unique = |frame: &Arc<RgbaImage>| {
-            Arc::strong_count(frame) == 1 && Arc::weak_count(frame) == 0
-        };
+        let unique =
+            |frame: &Arc<RgbaImage>| Arc::strong_count(frame) == 1 && Arc::weak_count(frame) == 0;
         let index = self.sent.iter().position(unique)?;
         let frame = self.sent.remove(index);
         self.sent.retain(|frame| !unique(frame));
@@ -4216,7 +4297,7 @@ fn decode_asset_for_path(path: &Path) -> Result<MovieAsset> {
     {
         if ext == "omv" {
             decode_omv_asset(path)
-        } else if is_wmv_extension(&ext) {
+        } else if uses_wmv_stream(&path, &ext) {
             decode_wmv_asset(path)
         } else {
             decode_mpeg2_asset(path)
@@ -4290,6 +4371,9 @@ fn probe_wmv_first_video_pts_ms(path: &Path) -> Result<Option<u64>> {
 }
 
 fn decode_wmv_preview_frame(path: &Path) -> Result<Arc<RgbaImage>> {
+    if host_movie::is_host_movie(path) {
+        return host_movie::preview_frame(path);
+    }
     #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
     let mut decoder = {
         let bytes = read_movie_bytes(path)?;
@@ -4525,6 +4609,9 @@ fn decode_wmv_audio_full_from_reader<R: Read + Seek>(
 }
 
 fn decode_wmv_audio_for_path(path: &Path, cancel: &AtomicBool) -> Result<Option<MovieAudio>> {
+    if host_movie::is_host_movie(path) {
+        return decode_host_movie_audio(path, cancel);
+    }
     // Native WMV playback must become ready after a bounded head probe, not after
     // decoding the whole WMA soundtrack. `WmvMovieAudioDecoder` already provides
     // the forward-only Kira streaming path; this probe supplies only the metadata
@@ -5430,7 +5517,10 @@ fn convert_omv_planes_into(
     let dh = display_height.max(1) as usize;
     let (uv_w, uv_h) = yuv_plane_size(frame_width, frame_height, fmt);
 
-    rgba.resize(output_width.saturating_mul(output_height).saturating_mul(4), 0);
+    rgba.resize(
+        output_width.saturating_mul(output_height).saturating_mul(4),
+        0,
+    );
     // Source column of each output column, and how much of a row they
     // span: rows are then read as slices (per-pixel sampling with a division
     // and bounds checks took longer than decoding a 1080p frame).

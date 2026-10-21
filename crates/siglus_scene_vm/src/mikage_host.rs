@@ -85,6 +85,29 @@ pub extern "C" fn siglus_mikage_set_h264_decoder(
     crate::assets::uci::set_h264_decoder(decoder);
 }
 
+/// Registers the host's movie decoder for movies siglus_rs can't decode,
+/// such as MP4 files under an .mpg name; a null `open` removes it.
+#[unsafe(no_mangle)]
+pub extern "C" fn siglus_mikage_set_movie_decoder(
+    open: Option<crate::movie::host_movie::HostMovieOpenFn>,
+    read_video: Option<crate::movie::host_movie::HostMovieReadVideoFn>,
+    read_audio: Option<crate::movie::host_movie::HostMovieReadAudioFn>,
+    close: Option<crate::movie::host_movie::HostMovieCloseFn>,
+) {
+    let decoder = match (open, read_video, read_audio, close) {
+        (Some(open), Some(read_video), Some(read_audio), Some(close)) => {
+            Some(crate::movie::host_movie::HostMovieDecoder {
+                open,
+                read_video,
+                read_audio,
+                close,
+            })
+        }
+        _ => None,
+    };
+    crate::movie::host_movie::set_decoder(decoder);
+}
+
 /// Forgets every registered and fallback font; register the next game's
 /// fonts after this, before creating it.
 #[unsafe(no_mangle)]

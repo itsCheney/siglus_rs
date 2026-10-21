@@ -75,6 +75,28 @@ void siglus_mikage_set_log_callback(siglus_mikage_log_callback callback, void *c
    UCI images some repacks put in .g00 files; any thread. */
 typedef int32_t (*siglus_mikage_h264_decoder)(const uint8_t *data, size_t length, uint32_t width, uint32_t height, uint16_t *y, uint16_t *u, uint16_t *v);
 void siglus_mikage_set_h264_decoder(siglus_mikage_h264_decoder decoder);
+/* Plays movies siglus_rs can't decode, such as MP4 (H.264/AAC) files a repack
+   ships under an .mpg name; files starting with an ISO "ftyp" box go here.
+   open reads the video (want_audio 0) or the audio (1) of the file, fills info
+   (channels 0 when there's no audio) and returns NULL when it can't.
+   read_video writes the next frame as RGBA, info.width*info.height*4 bytes,
+   and its time; returns 1, 0 at the end, negative on failure. read_audio
+   writes up to max_frames interleaved 16-bit frames and returns how many, 0
+   at the end, negative on failure. Handles are used on worker threads, one
+   thread at a time. A NULL function removes the decoder. */
+typedef struct {
+    uint32_t width;
+    uint32_t height;
+    uint64_t duration_ms;
+    uint32_t channels;
+    uint32_t sample_rate;
+} siglus_mikage_movie_info;
+typedef void *(*siglus_mikage_movie_open)(const char *path_utf8, int32_t want_audio, siglus_mikage_movie_info *info);
+typedef int32_t (*siglus_mikage_movie_read_video)(void *movie, uint8_t *rgba, uint64_t *pts_ms);
+typedef int64_t (*siglus_mikage_movie_read_audio)(void *movie, int16_t *samples, uint32_t max_frames);
+typedef void (*siglus_mikage_movie_close)(void *movie);
+void siglus_mikage_set_movie_decoder(siglus_mikage_movie_open open, siglus_mikage_movie_read_video read_video,
+                                     siglus_mikage_movie_read_audio read_audio, siglus_mikage_movie_close close);
 /* Scene.pck / Gameexe.dat replacements for the game in root (a patched
    executable's Scene.chs, Gameexe.chs...); NULL keeps the default. Call before create. */
 void siglus_mikage_set_resource_names(const char *root_utf8, const char *scene_utf8, const char *gameexe_utf8);
