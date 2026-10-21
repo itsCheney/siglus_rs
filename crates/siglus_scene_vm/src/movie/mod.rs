@@ -2264,8 +2264,15 @@ fn uses_wmv_stream(path: &Path, ext: &str) -> bool {
 }
 
 fn probe_host_movie_info(path: &Path) -> Result<MovieInfo> {
-    let movie = host_movie::HostMovie::open(path, false)?;
-    let info = movie.info;
+    // A movie the host can't open must not stop the game: it fails again,
+    // and is logged, when its frames are polled.
+    let info = match host_movie::HostMovie::open(path, false) {
+        Ok(movie) => movie.info,
+        Err(err) => {
+            log::warn!("{err:#}");
+            host_movie::HostMovieInfo::default()
+        }
+    };
     Ok(MovieInfo {
         path: path.to_path_buf(),
         width: (info.width > 0).then_some(info.width),
