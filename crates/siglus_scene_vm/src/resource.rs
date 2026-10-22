@@ -715,10 +715,11 @@ fn resolve_project_exe_key(project_dir: &Path) -> Option<[u8; 16]> {
             return cache_project_exe_key(project_dir, configured_key);
         }
     };
-    if !game_path
+    // A translated release's Gameexe.chs (or similar) is a renamed .dat.
+    if game_path
         .extension()
         .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("dat"))
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("ini"))
     {
         // Plain-text Gameexe.ini does not provide the encrypted resource pair
         // required by the resource-only cracker. Keep the configured behavior.
@@ -993,6 +994,12 @@ pub fn set_resource_names(project_dir: &Path, names: ResourceNames) {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let map = overrides.get_or_insert_with(HashMap::new);
     let key = resource_names_key(project_dir);
+    // Another Scene/Gameexe pair can need another EXE key.
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    project_exe_key_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(project_dir);
     if names == ResourceNames::default() {
         map.remove(&key);
     } else {
@@ -1014,7 +1021,9 @@ pub fn resource_names(project_dir: &Path) -> ResourceNames {
 /// present.
 pub fn gameexe_override_path(project_dir: &Path) -> Option<PathBuf> {
     let name = resource_names(project_dir).gameexe?;
-    resolve_windows_case_insensitive_file(&project_dir.join(name)).ok().flatten()
+    resolve_windows_case_insensitive_file(&project_dir.join(name))
+        .ok()
+        .flatten()
 }
 
 /// Resolve the one active Scene.pck used by the original lexer.
@@ -1799,7 +1808,10 @@ mod resource_name_tests {
             fs::write(dir.join(name), b"x").unwrap();
         }
         let file_name = |path: PathBuf| path.file_name().unwrap().to_string_lossy().into_owned();
-        assert_eq!(file_name(find_scene_pck_path_for_append(&dir, "").unwrap()), "Scene.pck");
+        assert_eq!(
+            file_name(find_scene_pck_path_for_append(&dir, "").unwrap()),
+            "Scene.pck"
+        );
 
         set_resource_names(
             &dir,
@@ -1808,12 +1820,24 @@ mod resource_name_tests {
                 gameexe: Some("Gameexe.chs".into()),
             },
         );
-        assert_eq!(file_name(find_scene_pck_path_for_append(&dir, "").unwrap()), "Scene.chs");
-        assert_eq!(file_name(find_initial_gameexe_path(&dir).unwrap()), "Gameexe.chs");
-        assert_eq!(gameexe_override_path(&dir).map(file_name).as_deref(), Some("Gameexe.chs"));
+        assert_eq!(
+            file_name(find_scene_pck_path_for_append(&dir, "").unwrap()),
+            "Scene.chs"
+        );
+        assert_eq!(
+            file_name(find_initial_gameexe_path(&dir).unwrap()),
+            "Gameexe.chs"
+        );
+        assert_eq!(
+            gameexe_override_path(&dir).map(file_name).as_deref(),
+            Some("Gameexe.chs")
+        );
 
         set_resource_names(&dir, ResourceNames::default());
-        assert_eq!(file_name(find_initial_gameexe_path(&dir).unwrap()), "Gameexe.dat");
+        assert_eq!(
+            file_name(find_initial_gameexe_path(&dir).unwrap()),
+            "Gameexe.dat"
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 }
