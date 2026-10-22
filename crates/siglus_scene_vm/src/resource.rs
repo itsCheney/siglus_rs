@@ -831,7 +831,9 @@ fn resolve_project_exe_key(project_dir: &Path) -> Option<[u8; 16]> {
         }
     }
 
-    let recovered = match siglus_key_recovery::recover_key_from_resources(&game, &scene) {
+    let recovered = match siglus_key_recovery::recover_key_from_resources(&game, &scene).or_else(
+        |err| recover_key_from_original_scene_pack(project_dir, &scene_path, &game).ok_or(err),
+    ) {
         Ok(key) => key,
         Err(err) => {
             log::error!(
@@ -866,6 +868,43 @@ fn resolve_project_exe_key(project_dir: &Path) -> Option<[u8; 16]> {
     }
 
     cache_project_exe_key(project_dir, Some(recovered))
+}
+
+/// A translated release's renamed pack (Scene.chs) can defeat the resource
+/// crack while the original Scene.pck beside it, encrypted with the same EXE
+/// key, does not: Gameexe.chs, read by the same patched executable, confirms
+/// the key either way.
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+fn recover_key_from_original_scene_pack(
+    project_dir: &Path,
+    scene_path: &Path,
+    game: &[u8],
+) -> Option<[u8; 16]> {
+    let original = resolve_windows_case_insensitive_file(&scene_path.with_file_name("Scene.pck"))
+        .ok()
+        .flatten()?;
+    if original == scene_path {
+        return None;
+    }
+    let scene = read_file_bytes(&original).ok()?;
+    match siglus_key_recovery::recover_key_from_resources(game, &scene) {
+        Ok(key) => {
+            log::warn!(
+                "recovered the Siglus EXE key for {} from {}",
+                project_dir.display(),
+                original.display()
+            );
+            Some(key)
+        }
+        Err(err) => {
+            log::error!(
+                "EXE key recovery from {} failed too: {}",
+                original.display(),
+                err
+            );
+            None
+        }
+    }
 }
 
 pub fn load_scene_pck_decode_options(
