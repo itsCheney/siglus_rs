@@ -629,7 +629,11 @@ impl ImageManager {
         Ok(id)
     }
 
-    fn decode_composed_g00_part(&mut self, part: &G00ComposePart) -> Result<RgbaImage> {
+    /// The part's cut and the original size of its file.
+    fn decode_composed_g00_part(
+        &mut self,
+        part: &G00ComposePart,
+    ) -> Result<(RgbaImage, (u32, u32))> {
         let (path, ty) = crate::resource::find_g00_image_with_append_dir(
             &self.project_dir,
             &self.current_append_dir,
@@ -664,8 +668,11 @@ impl ImageManager {
             - 1;
         let cut_no = part.cut_no.clamp(0, max_index as i32) as usize;
         let id = ImageHandle::new(album, cut_no);
+        let original_size = self
+            .original_size(&id)
+            .with_context(|| format!("missing cached composed g00 image id={}", id.index()))?;
         self.get(&id)
-            .map(|img| (*img).clone())
+            .map(|img| ((*img).clone(), original_size))
             .with_context(|| format!("missing cached composed g00 image id={}", id.index()))
     }
 
@@ -688,7 +695,7 @@ impl ImageManager {
 
         let parts = parse_g00_composite_descriptor(&normalized)?;
         let first = parts.first().context("composed g00 has no first entry")?;
-        let mut composed = if first.file_name.is_empty() {
+        let (mut composed, original_size) = if first.file_name.is_empty() {
             if first.x <= 0 || first.y <= 0 {
                 bail!("blank composed g00 base requires positive width,height");
             }
@@ -696,13 +703,15 @@ impl ImageManager {
                 .checked_mul(first.y as usize)
                 .and_then(|len| len.checked_mul(4))
                 .context("blank composed g00 size overflow")?;
-            RgbaImage {
+            let blank = RgbaImage {
                 width: first.x as u32,
                 height: first.y as u32,
                 center_x: 0,
                 center_y: 0,
                 rgba: vec![0; pixel_len],
-            }
+            };
+            let size = (blank.width, blank.height);
+            (blank, size)
         } else {
             self.decode_composed_g00_part(first)?
         };
@@ -710,7 +719,7 @@ impl ImageManager {
         let base_center_x = composed.center_x;
         let base_center_y = composed.center_y;
         for part in parts.iter().skip(1) {
-            let overlay = self.decode_composed_g00_part(part)?;
+            let (overlay, _) = self.decode_composed_g00_part(part)?;
             let dst_x = part
                 .x
                 .saturating_add(base_center_x)
@@ -723,6 +732,10 @@ impl ImageManager {
         }
 
         let id = self.insert_image(composed);
+        // Like a plain g00, the composed texture reports the size of the
+        // base file, not of its cut: bustshot scripts center on it.
+        id.album.frames.write().expect("image album lock poisoned")[0].original_size =
+            original_size;
         self.composite_to_id.insert(cache_key, id.downgrade());
         Ok(id)
     }

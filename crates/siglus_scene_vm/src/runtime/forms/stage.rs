@@ -11504,6 +11504,18 @@ fn dispatch_object_state_op(
                             }
                         }
                     } else if let Some(name) = obj.file_name.as_deref()
+                        && name.contains('|')
+                    {
+                        // A composed descriptor ("base(0,0,0)|face(0,0,2)")
+                        // names no file; it is one texture with one cut.
+                        if pat == 0
+                            && let Ok(id) = ctx.images.load_g00_composed(name)
+                            && let Some((width, height)) = ctx.images.original_size(&id)
+                        {
+                            sx = width as i64;
+                            sy = height as i64;
+                        }
+                    } else if let Some(name) = obj.file_name.as_deref()
                         && let Ok((path, _pct)) = crate::resource::find_g00_image_with_append_dir(
                             ctx.images.project_dir(),
                             &ctx.globals.append_dir,
