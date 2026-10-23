@@ -447,6 +447,11 @@ pub(crate) fn resolve_windows_case_insensitive_path(path: &Path) -> Result<Optio
 
     #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     {
+        if let Some(packed) =
+            crate::evb::resolve_file(path).or_else(|| crate::evb::resolve_folder(path))
+        {
+            return Ok(Some(packed));
+        }
         if path.exists() {
             return Ok(Some(path.to_path_buf()));
         }
@@ -502,6 +507,10 @@ pub(crate) fn resolve_windows_case_insensitive_file(path: &Path) -> Result<Optio
         not(all(target_arch = "wasm32", target_os = "unknown"))
     ))]
     {
+        // Files packed in the launcher hide the loose ones.
+        if let Some(packed) = crate::evb::resolve_file(path) {
+            return Ok(Some(packed));
+        }
         if let Some(cached) = positive_file_cache_get(path) {
             return Ok(Some(cached));
         }

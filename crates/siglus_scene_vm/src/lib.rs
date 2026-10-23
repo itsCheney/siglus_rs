@@ -21,6 +21,8 @@ pub mod audio;
 pub mod emote;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub mod emote_key;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+pub mod evb;
 pub mod image_manager;
 #[cfg(not(any(target_os = "horizon", target_os = "vita")))]
 pub mod ime;

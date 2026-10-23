@@ -246,6 +246,37 @@ pub unsafe extern "C" fn siglus_mikage_set_resource_names(
     );
 }
 
+/// Makes the files that `executable_utf8` packs with Enigma Virtual Box
+/// win over the loose files of the game in `root_utf8`, as they do when
+/// Windows runs it. They are unpacked on first use into `cache_utf8`
+/// (null: a hidden folder in the game). A null executable drops it.
+/// Returns 1 when the executable packs files, 0 otherwise. Call before
+/// `siglus_ios_create`.
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn siglus_mikage_set_launcher(
+    root_utf8: *const c_char,
+    executable_utf8: *const c_char,
+    cache_utf8: *const c_char,
+) -> i32 {
+    let Some(root) = (unsafe { cstr_opt(root_utf8) }) else {
+        return 0;
+    };
+    let executable = unsafe { cstr_opt(executable_utf8) };
+    let cache = unsafe { cstr_opt(cache_utf8) };
+    match crate::evb::set_launcher(
+        std::path::Path::new(&root),
+        executable.as_deref().map(std::path::Path::new),
+        cache.as_deref().map(std::path::Path::new),
+    ) {
+        Ok(packed) => i32::from(packed),
+        Err(err) => {
+            log::warn!("reading the files packed in the launcher: {err:#}");
+            0
+        }
+    }
+}
+
 /// Receives engine log records: level (1 error, 2 warn, 3 info, 4 debug,
 /// 5 trace), the module target and the message, both UTF-8 and valid only
 /// during the call. It may be called from any thread.
