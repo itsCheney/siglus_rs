@@ -938,7 +938,7 @@ fn render_editbox_rgba(
     let mut rgba = vec![255u8; (max_w * max_h * 4) as usize];
     let font_cell = font_px.round().max(1.0) as i32;
     let (baseline_y, glyph_top, glyph_bottom) = if let Some(font) = font {
-        let scaled = font.as_scaled(PxScale::from(font_px.max(1.0)));
+        let scaled = font.as_scaled(em_scale(font, font_px));
         let line_h = (scaled.height() + scaled.line_gap()).ceil().max(1.0) as i32;
         let top = ((max_h as i32 - line_h) / 2).max(0);
         let baseline = top + scaled.ascent().ceil() as i32;
@@ -1384,8 +1384,7 @@ fn render_positioned_glyphs_rgba(
     if let Some(font) = font {
         for placed in glyphs {
             let size = placed.size.max(1.0);
-            let scaled = font.as_scaled(PxScale::from(size));
-            let baseline = scaled.ascent().ceil().max(1.0) as i32;
+            let baseline = cell_baseline(font, size);
             let glyph = rasterize_ab_glyph_oriented(font, placed.ch, size, placed.vertical);
             let pad = text_effect_padding(size.round().max(1.0) as i32, placed.style);
             let (origin_x, origin_y) = positioned_glyph_origin(placed, &glyph, baseline);
@@ -1425,8 +1424,7 @@ fn render_positioned_glyphs_rgba(
     if let Some(font) = font {
         for placed in glyphs {
             let size = placed.size.max(1.0);
-            let scaled = font.as_scaled(PxScale::from(size));
-            let baseline = scaled.ascent().ceil().max(1.0) as i32;
+            let baseline = cell_baseline(font, size);
             let glyph = rasterize_ab_glyph_oriented(font, placed.ch, size, placed.vertical);
             if glyph.width == 0 || glyph.height == 0 {
                 continue;
@@ -1683,6 +1681,38 @@ fn rotate_raster_glyph_clockwise(src: RasterGlyph) -> RasterGlyph {
     }
 }
 
+/// The scale that makes a face's em `font_px` tall. Siglus sizes text like
+/// GDI's CreateFont with a negative height: the size is the em, so a full
+/// width character fills its `font_px` cell. `PxScale` instead fits the
+/// ascent-to-descent height, which shrinks faces with tall line boxes
+/// (PingFang's is 1.4 em) to about 70% of their cell.
+fn em_scale(font: &FontArc, font_px: f32) -> PxScale {
+    let px = font_px.max(1.0);
+    let units = font.units_per_em().unwrap_or(0.0);
+    let height = font.height_unscaled();
+    if units <= 0.0 || height <= 0.0 {
+        return PxScale::from(px);
+    }
+    PxScale::from(px * height / units)
+}
+
+/// Where the baseline sits below the top of a `font_px` character cell.
+/// A face whose line box is one em (MS Gothic, Hiragino) uses its ascent,
+/// as GDI does; a taller line box would push the text down, so it takes the
+/// CJK em-box convention of 0.88 em above the baseline instead.
+fn cell_baseline(font: &FontArc, font_px: f32) -> i32 {
+    let px = font_px.max(1.0);
+    let units = font.units_per_em().unwrap_or(0.0);
+    if units > 0.0 {
+        let ascent = font.ascent_unscaled() / units;
+        let descent = font.descent_unscaled() / units;
+        if (ascent - descent - 1.0).abs() > 0.02 {
+            return (px * 0.88).ceil().max(1.0) as i32;
+        }
+    }
+    font.as_scaled(em_scale(font, px)).ascent().ceil().max(1.0) as i32
+}
+
 fn rasterize_ab_glyph(font: &FontArc, ch: char, font_px: f32) -> RasterGlyph {
     // A character the face lacks comes from the fallback chain, on the same
     // baseline, instead of the face's empty box.
@@ -1695,7 +1725,7 @@ fn rasterize_ab_glyph(font: &FontArc, ch: char, font_px: f32) -> RasterGlyph {
 }
 
 fn rasterize_ab_glyph_in(font: &FontArc, ch: char, font_px: f32) -> RasterGlyph {
-    let scale = PxScale::from(font_px.max(1.0));
+    let scale = em_scale(font, font_px);
     let scaled = font.as_scaled(scale);
     let glyph_id = scaled.glyph_id(ch);
     let glyph = glyph_id.with_scale_and_position(scale, point(0.0, 0.0));
@@ -1795,8 +1825,7 @@ fn render_mwnd_text_ab_glyph_rgba_styled(
     let (space_x, space_y) = moji_space.unwrap_or((-1, 10));
     let font_cell = font_px.round().max(1.0) as i32;
     let line_h = (font_cell + space_y as i32).max(font_cell).max(1);
-    let scaled = font.as_scaled(PxScale::from(font_px.max(1.0)));
-    let baseline_y = scaled.ascent().ceil().max(1.0) as i32;
+    let baseline_y = cell_baseline(font, font_px);
     let effect_pad = text_effect_padding(font_cell, style);
     let render_w = max_w.saturating_add(effect_pad.max(0) as u32 + 2);
     let render_h = max_h.saturating_add(
@@ -2256,7 +2285,7 @@ pub fn text_line_metrics_ab_glyph(
     max_w: u32,
     max_h: u32,
 ) -> (usize, f32) {
-    let scaled = font.as_scaled(PxScale::from(font_px.max(1.0)));
+    let scaled = font.as_scaled(em_scale(font, font_px));
     let ascent = scaled.ascent().max(1.0);
     let line_height = (scaled.height() + scaled.line_gap()).max(1.0);
     if text.is_empty() || max_w == 0 || max_h == 0 {
@@ -2311,7 +2340,7 @@ fn render_text_ab_glyph_rgba(
     }
     let mut rgba = vec![0u8; (max_w * max_h * 4) as usize];
 
-    let scaled = font.as_scaled(PxScale::from(font_px.max(1.0)));
+    let scaled = font.as_scaled(em_scale(font, font_px));
     let ascent = scaled.ascent().max(1.0);
     let line_height = (scaled.height() + scaled.line_gap()).max(1.0);
 
